@@ -1,8 +1,11 @@
-import os, json, uuid, random, re
+import os, json, uuid, random, re, tempfile
 import telebot
 from telebot import types
+import yt_dlp
 
 TOKEN = os.getenv("TOKEN") or os.getenv("BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("TOKEN not found!")
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
 RANDOM_REPLIES = ["هلا والله 🖤","ارحب يا قَضّ 🕊️","منور والله","يا هلا يا هلا","نورت","هلا بعيون اسود 🖤"]
@@ -15,14 +18,14 @@ USERS_FILE = "users_data.json"
 def load_json(file, default):
     try:
         if os.path.exists(file):
-            with open(file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+            with open(file, 'r', encoding='utf-8') as ff:
+                return json.load(ff)
     except: pass
     return default
 
 def save_json(file, data):
-    with open(file, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    with open(file, 'w', encoding='utf-8') as ff:
+        json.dump(data, ff, ensure_ascii=False, indent=2)
 
 data = load_json(DATA_FILE, {})
 whispers = load_json(WHISPER_FILE, {})
@@ -36,7 +39,8 @@ try:
     me = bot.get_me()
     BOT_ID = me.id
     BOT_USERNAME = me.username
-except: pass
+except Exception as e:
+    print(f"get_me failed: {e}")
 
 def get_chat_data(chat_id):
     chat_id = str(chat_id)
@@ -78,8 +82,6 @@ def handle_music_search(message, query, search_type="يوت"):
         bot.send_message(message.chat.id, f"• {search_type} {query}\n• جاري التحميل... ⏳")
     except: pass
     try:
-        import yt_dlp
-        import tempfile
         ydl_opts_search = {'quiet': True, 'no_warnings': True, 'extract_flat': True}
         with yt_dlp.YoutubeDL(ydl_opts_search) as ydl:
             search_query = f"ytsearch1:{query}"
@@ -108,6 +110,15 @@ def handle_music_search(message, query, search_type="يوت"):
             bot.send_message(message.chat.id, f"🎵 {title}\n{video_url}")
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ خطأ: {str(e)[:200]}")
+        print(f"YT error: {e}")
+
+@bot.message_handler(func=lambda m: m.text and (m.text.strip().startswith("يوت ") or m.text.strip().startswith("بحث ")))
+def music_in_group(message):
+    text = message.text.strip()
+    if text.startswith("يوت "): q = text.replace("يوت ","",1).strip(); typ = "يوت"
+    else: q = text.replace("بحث ","",1).strip(); typ = "بحث"
+    if not q: return
+    handle_music_search(message, q, typ)
 
 @bot.message_handler(func=lambda m: m.chat.type == 'private', content_types=['text'])
 def private_panel(message):
@@ -247,15 +258,6 @@ def list_react(message):
         else: txt += f"• {n} => {e}\n"
     bot.reply_to(message, txt)
 
-@bot.message_handler(func=lambda m: m.text and (m.text.strip().startswith("يوت ") or m.text.strip().startswith("بحث ")))
-def music_in_group(message):
-    if message.chat.type == 'private': return
-    text = message.text.strip()
-    if text.startswith("يوت "): q = text.replace("يوت ","",1).strip(); typ = "يوت"
-    else: q = text.replace("بحث ","",1).strip(); typ = "بحث"
-    if not q: return
-    handle_music_search(message, q, typ)
-
 @bot.message_handler(content_types=['photo','video','sticker','animation','text'], func=lambda m: m.chat.type!= 'private')
 def main_handler(message):
     chat_id = str(message.chat.id)
@@ -291,7 +293,11 @@ def main_handler(message):
                 try: bot.set_message_reaction(message.chat.id, message.message_id, reaction=[types.ReactionTypeEmoji("🖤")])
                 except: pass
                 bot.reply_to(message, random.choice(ASWAD_REPLIES)); return
-    if message.text and any(k in message.text for k in ["رفع","تنزيل","قفل","فتح","حظر","طرد","الاوامر","تفعيل","تعطيل","ضع تفاعل","مسح تفاعل","التفاعلات","يوت","بحث","ه","همس","ايدي","م1","م2"]): return
+    if message.text:
+        txt_strip = message.text.strip()
+        block_list = ["رفع","تنزيل","قفل","فتح","حظر","طرد","الاوامر","تفعيل","تعطيل","ضع تفاعل","مسح تفاعل","التفاعلات","يوت","بحث","همس","ايدي","م1","م2","م3"]
+        if txt_strip == "ه" or any(txt_strip.startswith(k+" ") or txt_strip==k for k in block_list):
+            return
     if not c.get("replies_enabled", True): return
     if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.id == BOT_ID:
         bot.reply_to(message, random.choice(RANDOM_REPLIES)); return
@@ -343,7 +349,7 @@ def locks_handler(message):
     if "قفل" in message.text: c["locks"][typ] = True; save_data(); bot.reply_to(message, f"🔒 تم قفل {typ}")
     else: c["locks"][typ] = False; save_data(); bot.reply_to(message, f"🔓 تم فتح {typ}")
 
-@bot.message_handler(func=lambda m: m.text and m.text.strip() == "ه" or (m.text and "همس" in m.text))
+@bot.message_handler(func=lambda m: m.text and (m.text.strip() == "ه" or (m.text and m.text.strip().startswith("همس"))))
 def whisper_init(message):
     if message.chat.type == 'private': return
     if not message.reply_to_message: return
